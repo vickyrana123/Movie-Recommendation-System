@@ -136,4 +136,4 @@ export TMDB_API_KEY=your_api_key_here # Mac/Linux
 
 ---
 
-<p align="center">CineMatch &nbsp;•&nbsp; Your Movie Universe &nbsp;•&nbsp; Powered by TMDb</p>
+<p align="center">MADE BY ❤ VICKY RANA</p>
