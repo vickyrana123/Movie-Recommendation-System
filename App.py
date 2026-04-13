@@ -137,7 +137,7 @@ st.markdown("""
         box-shadow: 0 4px 18px rgba(229,9,20,0.4) !important;
     }
     .stButton > button:disabled { background: #2a2a2a !important; color: #555 !important; transform: none !important; box-shadow: none !important; }
-    section[data-testid="stSidebar"] .stButton > button { background: transparent !important; border: 1px solid #e50914 !important; color: #e50914 !important; }
+    section[data-testid="stSidebar"] .stButton > button { background: transparent !important; border: 1px solid #e50914 !important; color: #e50914 !important; width: 100% !important; }
     section[data-testid="stSidebar"] .stButton > button:hover { background: #e50914 !important; color: #fff !important; }
     [data-testid="stExpander"] { background: #1a1a1a !important; border: 1px solid #252525 !important; border-radius: 8px !important; }
     [data-testid="stExpander"] summary { color: #888 !important; font-size: 0.78rem !important; }
@@ -253,7 +253,8 @@ with st.sidebar:
     ])
     min_rating = st.slider("Minimum Rating ⭐", 0.0, 10.0, 0.0, step=0.5)
     st.markdown("---")
-    if st.button("🎲 Surprise Me!"):
+    st.markdown("<div style='width:100%'>", unsafe_allow_html=True)
+    if st.button("🎲 Surprise Me!", use_container_width=True):
         import random as _r
         pop = requests.get("https://api.themoviedb.org/3/movie/popular",
                            params={"api_key": TMDB_API_KEY, "page": _r.randint(1, 10)},
@@ -262,6 +263,7 @@ with st.sidebar:
             pick = _r.choice(pop)
             set_current_movie(pick["title"], pick["id"])
             st.rerun()
+    st.markdown("</div>", unsafe_allow_html=True)
     if st.session_state.watchlist:
         st.markdown(f"📋 **Watchlist:** {len(st.session_state.watchlist)} movies")
 
