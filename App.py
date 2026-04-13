@@ -352,7 +352,7 @@ with tab2:
 # ── TAB 3 ─────────────────────────────────────────────────────────────────────
 with tab3:
     st.markdown('<div class="section-header">🔍 Search Any Movie</div>', unsafe_allow_html=True)
-    query = st.text_input("", placeholder="Search TMDb — any movie, any language, any year…", key="discover_search")
+    query = st.text_input("Search", placeholder="Search TMDb — any movie, any language, any year…", key="discover_search", label_visibility="collapsed")
     if query and len(query.strip()) > 1:
         with st.spinner("Searching…"):
             disc_results = search_movies_for_display(query, n=12)
