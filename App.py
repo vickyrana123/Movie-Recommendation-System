@@ -128,7 +128,9 @@ st.markdown("""
         background: #e50914 !important; color: #fff !important; border: none !important;
         border-radius: 6px !important; font-size: 0.72rem !important; font-weight: 700 !important;
         letter-spacing: 0.05em !important; text-transform: uppercase !important;
-        padding: 0.4rem 0.8rem !important; transition: all 0.2s !important;
+        padding: 0.4rem 0 !important; transition: all 0.2s !important;
+        width: 100% !important; min-width: 0 !important;
+        display: flex !important; align-items: center !important; justify-content: center !important;
     }
     .stButton > button:hover {
         background: #ff1a1a !important; transform: scale(1.03) !important;
@@ -200,16 +202,19 @@ def render_card_grid(movies, key_prefix, cols_per_row=5):
                 </div>
                 """, unsafe_allow_html=True)
 
-                b1, b2 = st.columns(2)
+                st.markdown('<div style="display:flex;gap:4px;width:100%;">', unsafe_allow_html=True)
+                b1, b2 = st.columns([1, 1])
                 with b1:
-                    if st.button("Similar", key=f"{key_prefix}_sim_{i+j}"):
+                    if st.button("Similar", key=f"{key_prefix}_sim_{i+j}", use_container_width=True):
                         set_current_movie(movie["title"], int(movie.get("id", 0)) or None)
                         st.rerun()
                 with b2:
                     in_wl = movie.get("id") in [w["id"] for w in st.session_state.watchlist]
-                    if st.button("✓ Saved" if in_wl else "+ Save", key=f"{key_prefix}_wl_{i+j}", disabled=in_wl):
+                    if st.button("✓ Saved" if in_wl else "+ Save", key=f"{key_prefix}_wl_{i+j}", disabled=in_wl, use_container_width=True):
                         add_to_watchlist(movie)
                         st.rerun()
+                st.markdown('</div>', unsafe_allow_html=True)
+
 
 # ===================== HEADER =====================
 st.markdown('<div class="cinematic-title">CineMatch</div>', unsafe_allow_html=True)
@@ -259,6 +264,7 @@ with st.sidebar:
             st.rerun()
     if st.session_state.watchlist:
         st.markdown(f"📋 **Watchlist:** {len(st.session_state.watchlist)} movies")
+
 
 # ===================== TABS =====================
 tab1, tab2, tab3, tab4 = st.tabs(["🎯 Recommendations", "🔥 Trending Now", "🔍 Discover", "📋 Watchlist"])
@@ -410,7 +416,7 @@ with tab4:
             show_trailer = st.session_state.get(f"show_trailer_{w['id']}", False)
             if show_trailer and trailer_key and trailer_key != "none":
                 st.markdown(
-                    f'<iframe width="100%" height="515" src="https://www.youtube.com/embed/{trailer_key}?autoplay=1" '
+                    f'<iframe width="100%" height="315" src="https://www.youtube.com/embed/{trailer_key}?autoplay=1" '
                     f'frameborder="0" allow="autoplay; encrypted-media" allowfullscreen style="border-radius:10px;margin:8px 0;"></iframe>',
                     unsafe_allow_html=True
                 )
@@ -426,8 +432,8 @@ with tab4:
 # ===================== FOOTER =====================
 st.markdown("---")
 st.markdown(
-    "<p style='text-align:center;color:#2a2a2a;font-size:1.12rem;letter-spacing:0.12em;text-transform:uppercase;'>"
-    "MADE BY ❤ VICKY RANA"
+    "<p style='text-align:center;color:#2a2a2a;font-size:0.72rem;letter-spacing:0.12em;text-transform:uppercase;'>"
+    "CineMatch &nbsp;•&nbsp; Your Movie Universe &nbsp;•&nbsp; Powered by TMDb"
     "</p>",
     unsafe_allow_html=True
 )
