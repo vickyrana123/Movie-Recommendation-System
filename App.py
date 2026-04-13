@@ -151,19 +151,92 @@ st.markdown("""
     ::-webkit-scrollbar-track { background: #111; }
     ::-webkit-scrollbar-thumb { background: #2a2a2a; border-radius: 3px; }
     ::-webkit-scrollbar-thumb:hover { background: #e50914; }
+    /* Watchlist row buttons — identical size */
+    [data-testid="stHorizontalBlock"] .stButton > button {
+        min-width: 0 !important;
+        width: 100% !important;
+        height: 40px !important;
+        line-height: 1 !important;
+        white-space: nowrap !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        padding: 0.5rem 1rem !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        font-size: 0.75rem !important;
+        letter-spacing: 0.06em !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
 
 # ===================== SESSION STATE =====================
-for _k, _v in [("current_movie_title", None), ("current_movie_id", None), ("watchlist", [])]:
+for _k, _v in [("current_movie_title", None), ("current_movie_id", None), ("watchlist", []), ("active_tab", 0), ("scroll_top", False), ("recently_viewed", []), ("ui_lang", "English")]:
+
     if _k not in st.session_state:
         st.session_state[_k] = _v
 
 
+# ===================== TRANSLATIONS =====================
+LANG = {
+    "English": {
+        "controls": "🎛️ Controls", "search_ph": "Type any movie title…",
+        "select_movie": "Select a movie", "get_recos": "🎯 Get Recommendations",
+        "no_results": "No results found.", "recos_slider": "Recommendations",
+        "sort_filter": "⚙️ Sort & Filter", "sort_by": "Sort by",
+        "sort_opts": ["Similarity", "Rating ↓", "Year (Newest)"],
+        "genre_filter": "Genre filter", "min_rating": "Minimum Rating ⭐",
+        "decade": "📅 Decade", "decade_opts": ["Any","2020s","2010s","2000s","1990s","1980s","1970s & older"],
+        "surprise": "🎲 Surprise Me!", "watchlist_count": "Watchlist",
+        "now_exploring": "Now Exploring", "because_liked": "Because you liked",
+        "no_match": "No movies matched your filters.",
+        "trending": "🔥 Trending This Week", "discover": "🔍 Search Any Movie",
+        "search_ph2": "Search TMDb — any movie, any language, any year…",
+        "watchlist_empty": "Your watchlist is empty.<br>Browse and save movies from any tab.",
+        "clear_wl": "🗑️ Clear Watchlist", "recently_viewed": "🕐 Recently Viewed",
+        "no_history": "No movies viewed yet.<br>Start exploring to build your history.",
+        "clear_hist": "🗑️ Clear History", "similar": "Similar", "save": "+ Save",
+        "saved": "✓ Saved", "trailer": "▶ Trailer", "close": "Close",
+        "remove": "Remove", "sub": "One search. Endless movies. • Discover what to watch next.",
+        "ui_language": "🌐 Website Language",
+    },
+    "Hindi": {
+        "controls": "🎛️ नियंत्रण", "search_ph": "कोई भी फिल्म का नाम लिखें…",
+        "select_movie": "फिल्म चुनें", "get_recos": "🎯 सुझाव पाएं",
+        "no_results": "कोई परिणाम नहीं मिला।", "recos_slider": "सुझाव",
+        "sort_filter": "⚙️ क्रम और फ़िल्टर", "sort_by": "क्रम",
+        "sort_opts": ["समानता", "रेटिंग ↓", "वर्ष (नवीनतम)"],
+        "genre_filter": "शैली फ़िल्टर", "min_rating": "न्यूनतम रेटिंग ⭐",
+        "decade": "📅 दशक", "decade_opts": ["कोई भी","2020s","2010s","2000s","1990s","1980s","1970s व पुराने"],
+        "surprise": "🎲 मुझे चौंकाओ!", "watchlist_count": "वॉचलिस्ट",
+        "now_exploring": "अभी देख रहे हैं", "because_liked": "क्योंकि आपको पसंद आई",
+        "no_match": "कोई फिल्म फ़िल्टर से मेल नहीं खाती।",
+        "trending": "🔥 इस हफ्ते ट्रेंडिंग", "discover": "🔍 कोई भी फिल्म खोजें",
+        "search_ph2": "TMDb पर खोजें — कोई भी फिल्म, कोई भी भाषा, कोई भी साल…",
+        "watchlist_empty": "आपकी वॉचलिस्ट खाली है।<br>किसी भी टैब से फिल्में सहेजें।",
+        "clear_wl": "🗑️ वॉचलिस्ट साफ करें", "recently_viewed": "🕐 हाल ही में देखा",
+        "no_history": "अभी तक कोई फिल्म नहीं देखी।<br>इतिहास बनाने के लिए एक्सप्लोर करें।",
+        "clear_hist": "🗑️ इतिहास साफ करें", "similar": "समान", "save": "+ सहेजें",
+        "saved": "✓ सहेजा", "trailer": "▶ ट्रेलर", "close": "बंद करें",
+        "remove": "हटाएं", "sub": "एक खोज। अनंत फिल्में। • अगली फिल्म खोजें।",
+        "ui_language": "🌐 वेबसाइट भाषा",
+    }
+}
+
+def T(key):
+    lang = st.session_state.get("ui_lang", "English")
+    return LANG.get(lang, LANG["English"]).get(key, LANG["English"].get(key, key))
+
 def set_current_movie(title, tmdb_id=None):
     st.session_state.current_movie_title = title
     st.session_state.current_movie_id = tmdb_id
+    # Track recently viewed
+    rv = st.session_state.recently_viewed
+    entry = {"title": title, "id": str(tmdb_id) if tmdb_id else ""}
+    rv = [r for r in rv if r["id"] != entry["id"]]
+    rv.insert(0, entry)
+    st.session_state.recently_viewed = rv[:10]
 
 
 def add_to_watchlist(movie):
@@ -205,25 +278,47 @@ def render_card_grid(movies, key_prefix, cols_per_row=5):
                 st.markdown('<div style="display:flex;gap:4px;width:100%;">', unsafe_allow_html=True)
                 b1, b2 = st.columns([1, 1])
                 with b1:
-                    if st.button("Similar", key=f"{key_prefix}_sim_{i+j}", use_container_width=True):
+                    if st.button(T("similar"), key=f"{key_prefix}_sim_{i+j}", use_container_width=True):
                         set_current_movie(movie["title"], int(movie.get("id", 0)) or None)
+                        st.session_state.active_tab = 0
+                        st.session_state.scroll_top = True
                         st.rerun()
                 with b2:
                     in_wl = movie.get("id") in [w["id"] for w in st.session_state.watchlist]
-                    if st.button("✓ Saved" if in_wl else "+ Save", key=f"{key_prefix}_wl_{i+j}", disabled=in_wl, use_container_width=True):
+                    if st.button(T("saved") if in_wl else T("save"), key=f"{key_prefix}_wl_{i+j}", disabled=in_wl, use_container_width=True):
                         add_to_watchlist(movie)
                         st.rerun()
                 st.markdown('</div>', unsafe_allow_html=True)
 
 
+# ===================== TAB SWITCHER =====================
+if st.session_state.get("active_tab", 0) == 0 and st.session_state.get("current_movie_title"):
+    st.markdown("""
+    <script>
+    setTimeout(function() {
+        const tabs = window.parent.document.querySelectorAll('[data-testid="stTab"]');
+        if (tabs.length > 0) tabs[0].click();
+    }, 100);
+    </script>
+    """, unsafe_allow_html=True)
+
 # ===================== HEADER =====================
 st.markdown('<div class="cinematic-title">CineMatch</div>', unsafe_allow_html=True)
-st.markdown('<div class="cinematic-sub">One search. Endless movies. &nbsp;•&nbsp; Discover what to watch next.</div>', unsafe_allow_html=True)
+st.markdown(f'<div class="cinematic-sub">{T("sub")}</div>', unsafe_allow_html=True)
 
 # ===================== SIDEBAR =====================
 with st.sidebar:
-    st.markdown("### 🎛️ Controls")
-    search_term = st.text_input("Search movies", placeholder="Type any movie title…", key="sidebar_search")
+    # Language switcher at top
+    ui_lang = st.selectbox(T("ui_language"), list(LANG.keys()),
+                           index=list(LANG.keys()).index(st.session_state.get("ui_lang","English")),
+                           key="lang_select")
+    if ui_lang != st.session_state.get("ui_lang","English"):
+        st.session_state.ui_lang = ui_lang
+        st.rerun()
+
+    st.markdown(f"### {T('controls')}")
+    search_term = st.text_input(T("controls"), placeholder=T("search_ph"),
+                                key="sidebar_search", label_visibility="collapsed")
 
     sidebar_results = []
     movie_options = []
@@ -234,27 +329,28 @@ with st.sidebar:
         movie_ids = [m["id"] for m in sidebar_results[:20]]
 
     if movie_options:
-        chosen_label = st.selectbox("Select a movie", options=movie_options, key="movie_selector")
+        chosen_label = st.selectbox(T("select_movie"), options=movie_options, key="movie_selector")
         chosen_idx = movie_options.index(chosen_label)
-        if st.button("🎯 Get Recommendations"):
+        if st.button(T("get_recos")):
             set_current_movie(sidebar_results[chosen_idx]["title"], sidebar_results[chosen_idx]["id"])
             st.rerun()
     elif search_term:
-        st.caption("No results found.")
+        st.caption(T("no_results"))
 
-    no_of_reco = st.slider("Recommendations", 5, 20, 10)
+    no_of_reco = st.slider(T("recos_slider"), 5, 20, 10)
     st.markdown("---")
-    st.markdown("#### ⚙️ Sort & Filter")
-    sort_by = st.selectbox("Sort by", ["Similarity", "Rating ↓", "Year (Newest)"])
-    genre_filter = st.multiselect("Genre filter", [
+    st.markdown(f"#### {T('sort_filter')}")
+    sort_by = st.selectbox(T("sort_by"), T("sort_opts"))
+    genre_filter = st.multiselect(T("genre_filter"), [
         "Action", "Adventure", "Animation", "Comedy", "Crime",
         "Drama", "Fantasy", "Horror", "Mystery", "Romance",
         "Science Fiction", "Thriller", "War", "Western"
     ])
-    min_rating = st.slider("Minimum Rating ⭐", 0.0, 10.0, 0.0, step=0.5)
+    min_rating = st.slider(T("min_rating"), 0.0, 10.0, 0.0, step=0.5)
+    decade_filter = st.selectbox(T("decade"), T("decade_opts"))
     st.markdown("---")
     st.markdown("<div style='width:100%'>", unsafe_allow_html=True)
-    if st.button("🎲 Surprise Me!", use_container_width=True):
+    if st.button(T("surprise"), use_container_width=True):
         import random as _r
         pop = requests.get("https://api.themoviedb.org/3/movie/popular",
                            params={"api_key": TMDB_API_KEY, "page": _r.randint(1, 10)},
@@ -265,14 +361,23 @@ with st.sidebar:
             st.rerun()
     st.markdown("</div>", unsafe_allow_html=True)
     if st.session_state.watchlist:
-        st.markdown(f"📋 **Watchlist:** {len(st.session_state.watchlist)} movies")
+        st.markdown(f"📋 **{T('watchlist_count')}:** {len(st.session_state.watchlist)}")
 
 
 # ===================== TABS =====================
-tab1, tab2, tab3, tab4 = st.tabs(["🎯 Recommendations", "🔥 Trending Now", "🔍 Discover", "📋 Watchlist"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["🎯 " + T("get_recos")[2:], "🔥 " + T("trending")[2:], "🔍 " + T("discover")[2:], "📋 " + T("watchlist_count"), T("recently_viewed")])
 
 # ── TAB 1 ─────────────────────────────────────────────────────────────────────
 with tab1:
+    # Scroll to top when Similar is clicked
+    if st.session_state.get("scroll_top", False):
+        st.markdown("""
+        <script>
+            window.parent.document.querySelector('[data-testid="stAppViewContainer"]').scrollTo({top: 0, behavior: 'smooth'});
+        </script>
+        """, unsafe_allow_html=True)
+        st.session_state.scroll_top = False
+
     if st.session_state.current_movie_title:
         title = st.session_state.current_movie_title
         mid   = st.session_state.current_movie_id
@@ -291,7 +396,7 @@ with tab1:
         with b_col:
             st.markdown(f"""
             <div class="featured-banner">
-                <div class="featured-badge">Now Exploring</div>
+                <div class="featured-badge">{T("now_exploring")}</div>
                 <div class="featured-title">{feat_title}</div>
                 <div class="featured-meta">
                     ⭐ {feat_rating} &nbsp;•&nbsp; {feat_year} &nbsp;•&nbsp; {feat_runtime}<br>
@@ -313,19 +418,27 @@ with tab1:
             recos = [r for r in recos if any(g in r.get("genres", "") for g in genre_filter)]
         if min_rating > 0:
             recos = [r for r in recos if float(r.get("rating","0/10").split("/")[0]) >= min_rating]
-        if sort_by == "Rating ↓":
+        if decade_filter not in ("Any", T("decade_opts")[0]):
+            decade_map = {
+                "2020s": (2020, 2029), "2010s": (2010, 2019), "2000s": (2000, 2009),
+                "1990s": (1990, 1999), "1980s": (1980, 1989), "1970s & older": (0, 1979)
+            }
+            d_from, d_to = decade_map.get(decade_filter, (0, 9999))
+            recos = [r for r in recos if r.get("year","0").isdigit() and d_from <= int(r["year"]) <= d_to]
+        sort_opts = T("sort_opts")
+        if sort_by == sort_opts[1]:
             recos.sort(key=lambda x: float(x["rating"].split("/")[0]) if x.get("rating","N/A") != "N/A" else 0, reverse=True)
-        elif sort_by == "Year (Newest)":
+        elif sort_by == sort_opts[2]:
             recos.sort(key=lambda x: int(x["year"]) if x.get("year","N/A") not in ("N/A","") else 0, reverse=True)
 
         recos = recos[:no_of_reco]
-        st.markdown(f'<div class="section-header">Because you liked {feat_title}</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="section-header">{T("because_liked")} {feat_title}</div>', unsafe_allow_html=True)
         st.caption(f"{len(recos)} recommendations • {sort_by}")
 
         if recos:
             render_card_grid(recos, key_prefix="reco", cols_per_row=5)
         else:
-            st.warning("No movies matched your filters.")
+            st.warning(T("no_match"))
     else:
         st.markdown("""
         <div style="text-align:center;padding:5rem 2rem;">
@@ -341,7 +454,7 @@ with tab1:
 
 # ── TAB 2 ─────────────────────────────────────────────────────────────────────
 with tab2:
-    st.markdown('<div class="section-header">🔥 Trending This Week</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="section-header">{T("trending")}</div>', unsafe_allow_html=True)
     with st.spinner("Loading trending movies…"):
         trending = fetch_trending(16)
     if trending:
@@ -351,8 +464,8 @@ with tab2:
 
 # ── TAB 3 ─────────────────────────────────────────────────────────────────────
 with tab3:
-    st.markdown('<div class="section-header">🔍 Search Any Movie</div>', unsafe_allow_html=True)
-    query = st.text_input("Search", placeholder="Search TMDb — any movie, any language, any year…", key="discover_search", label_visibility="collapsed")
+    st.markdown(f'<div class="section-header">{T("discover")}</div>', unsafe_allow_html=True)
+    query = st.text_input("Search", placeholder=T("search_ph2"), key="discover_search", label_visibility="collapsed")
     if query and len(query.strip()) > 1:
         with st.spinner("Searching…"):
             disc_results = search_movies_for_display(query, n=12)
@@ -386,13 +499,13 @@ with tab4:
         st.markdown("<br>", unsafe_allow_html=True)
 
         for idx, w in enumerate(wl.copy()):
-            c1, c2, c3, c4 = st.columns([5, 1, 1, 1])
+            c1, c2, c3, c4 = st.columns([3, 1, 1.5, 1.5])
             with c1:
                 st.markdown(f"🎬 **{w['title']}** &nbsp; <span style='color:#555;font-size:0.8rem'>{w.get('year','')}</span>", unsafe_allow_html=True)
             with c2:
                 st.markdown(f"<span style='color:#e50914;font-size:0.8rem;font-weight:700;'>⭐ {w.get('rating','N/A')}</span>", unsafe_allow_html=True)
             with c3:
-                if st.button("▶ Trailer", key=f"wl_trailer_{idx}"):
+                if st.button(T("trailer"), key=f"wl_trailer_{idx}"):
                     trailer_key = st.session_state.get(f"trailer_{w['id']}")
                     if not trailer_key:
                         try:
@@ -407,10 +520,15 @@ with tab4:
                             trailer_key = "none"
                         st.session_state[f"trailer_{w['id']}"] = trailer_key
                     current = st.session_state.get(f"show_trailer_{w['id']}", False)
+                    # Close all other trailers first
+                    for _w in st.session_state.watchlist:
+                        if _w["id"] != w["id"]:
+                            st.session_state[f"show_trailer_{_w['id']}"] = False
+                    # Toggle this one
                     st.session_state[f"show_trailer_{w['id']}"] = not current
                     st.rerun()
             with c4:
-                if st.button("✕", key=f"wl_rm_{idx}"):
+                if st.button(T("close"), key=f"wl_rm_{idx}"):
                     st.session_state.watchlist.remove(w)
                     st.rerun()
 
@@ -427,9 +545,46 @@ with tab4:
             st.markdown("<hr style='margin:4px 0;border-color:#1a1a1a;'>", unsafe_allow_html=True)
 
         st.markdown("<br>", unsafe_allow_html=True)
-        if st.button("🗑️ Clear Watchlist"):
-            st.session_state.watchlist = []
-            st.rerun()
+        col_clear1, col_clear2, col_clear3 = st.columns([1, 2, 1])
+        with col_clear2:
+            if st.button(T("clear_wl"), use_container_width=True):
+                st.session_state.watchlist = []
+                st.rerun()
+
+# ── TAB 5 ─────────────────────────────────────────────────────────────────────
+with tab5:
+    st.markdown(f'<div class="section-header">{T("recently_viewed")}</div>', unsafe_allow_html=True)
+    rv = st.session_state.recently_viewed
+    if not rv:
+        st.markdown("""
+        <div style="text-align:center;padding:3rem;color:#444;">
+            <div style="font-size:2.5rem;">🕐</div>
+            <div style="margin-top:0.8rem;font-size:0.9rem;">No movies viewed yet.<br>Start exploring to build your history.</div>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.caption(f"{len(rv)} recently viewed")
+        for ridx, r in enumerate(rv):
+            rc1, rc2, rc3 = st.columns([5, 1.5, 1.5])
+            with rc1:
+                st.markdown(f"🎬 **{r['title']}**", unsafe_allow_html=True)
+            with rc2:
+                if st.button(T("similar"), key=f"rv_sim_{ridx}"):
+                    set_current_movie(r["title"], int(r["id"]) if r.get("id") else None)
+                    st.session_state.active_tab = 0
+                    st.session_state.scroll_top = True
+                    st.rerun()
+            with rc3:
+                if st.button(T("remove"), key=f"rv_rm_{ridx}"):
+                    st.session_state.recently_viewed.pop(ridx)
+                    st.rerun()
+            st.markdown("<hr style='margin:4px 0;border-color:#1a1a1a;'>", unsafe_allow_html=True)
+        st.markdown("<br>", unsafe_allow_html=True)
+        col1, col2, col3 = st.columns([1,2,1])
+        with col2:
+            if st.button(T("clear_hist"), use_container_width=True):
+                st.session_state.recently_viewed = []
+                st.rerun()
 
 # ===================== FOOTER =====================
 st.markdown("---")
