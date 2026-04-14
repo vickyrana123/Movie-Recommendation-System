@@ -70,7 +70,7 @@ def _tmdb_get(path: str, **params) -> dict:
         r = _session.get(
             f"{TMDB_BASE}/{path}",
             params={"api_key": TMDB_API_KEY, **params},
-            timeout=10        # reduced from 8 → fail faster on bad requests
+            timeout=10
         )
         r.raise_for_status()
         return r.json()
@@ -253,4 +253,138 @@ def search_movies_for_display(query: str, n: int = 12) -> list:
             "poster": f"{TMDB_IMG}{poster_path}" if poster_path else None,
             "genres": "N/A",
         })
+    return movies
+
+
+# ── NEW: Browse by Language / Country ─────────────────────────────────────────
+
+# Supported language codes mapped to display names
+LANGUAGE_OPTIONS = {
+    "Any":        "",
+    "English":    "en",
+    "Hindi":      "hi",
+    "French":     "fr",
+    "Spanish":    "es",
+    "Korean":     "ko",
+    "Japanese":   "ja",
+    "Italian":    "it",
+    "German":     "de",
+    "Tamil":      "ta",
+    "Telugu":     "te",
+    "Portuguese": "pt",
+    "Chinese":    "zh",
+    "Arabic":     "ar",
+    "Turkish":    "tr",
+    "Russian":    "ru",
+}
+
+# TMDb region codes for country filtering
+COUNTRY_OPTIONS = {
+    "Any":            "",
+    "🇺🇸 USA":         "US",
+    "🇮🇳 India":       "IN",
+    "🇬🇧 UK":          "GB",
+    "🇫🇷 France":      "FR",
+    "🇩🇪 Germany":     "DE",
+    "🇯🇵 Japan":       "JP",
+    "🇰🇷 South Korea": "KR",
+    "🇮🇹 Italy":       "IT",
+    "🇪🇸 Spain":       "ES",
+    "🇧🇷 Brazil":      "BR",
+    "🇨🇳 China":       "CN",
+    "🇲🇽 Mexico":      "MX",
+    "🇷🇺 Russia":      "RU",
+    "🇦🇺 Australia":   "AU",
+    "🇹🇷 Turkey":      "TR",
+}
+
+GENRE_ID_MAP = {
+    "Action": 28, "Adventure": 12, "Animation": 16, "Comedy": 35,
+    "Crime": 80, "Documentary": 99, "Drama": 18, "Family": 10751,
+    "Fantasy": 14, "History": 36, "Horror": 27, "Music": 10402,
+    "Mystery": 9648, "Romance": 10749, "Science Fiction": 878,
+    "Thriller": 53, "War": 10752, "Western": 37,
+}
+
+SORT_OPTIONS = {
+    "Popularity ↓":   "popularity.desc",
+    "Rating ↓":       "vote_average.desc",
+    "Newest First":   "primary_release_date.desc",
+    "Oldest First":   "primary_release_date.asc",
+}
+
+
+def fetch_by_language_country(
+    language: str = "",
+    region: str = "",
+    genre: str = "",
+    sort: str = "popularity.desc",
+    page: int = 1,
+    n: int = 16,
+) -> list:
+    """
+    Discover movies filtered by original language, region, and/or genre.
+    Returns a list of lightweight movie dicts (poster, title, year, rating).
+    """
+    params = {
+        "sort_by":               sort,
+        "vote_count.gte":        50,    # skip obscure unrated titles
+        "page":                  page,
+    }
+    if language:
+        params["with_original_language"] = language
+    if region:
+        params["region"] = region
+    if genre and genre in GENRE_ID_MAP:
+        params["with_genres"] = GENRE_ID_MAP[genre]
+
+    data = _tmdb_get("discover/movie", **params)
+    movies = []
+    for m in data.get("results", [])[:n]:
+        poster_path = m.get("poster_path")
+        movies.append({
+            "id":     str(m.get("id", "")),
+            "title":  m.get("title", "Unknown"),
+            "year":   (m.get("release_date", "") or "")[:4],
+            "rating": f"{m.get('vote_average', 0):.1f}/10",
+            "poster": f"{TMDB_IMG}{poster_path}" if poster_path else None,
+            "genres": "N/A",
+            "overview": m.get("overview", ""),
+        })
+    return movies
+
+
+# ── NEW: Release Calendar (Upcoming Movies) ───────────────────────────────────
+
+def fetch_upcoming_movies(region: str = "US", pages: int = 3) -> list:
+    """
+    Fetch upcoming theatrical releases from TMDb, sorted by release date.
+    Returns enriched dicts including release_date for calendar grouping.
+    """
+    seen = set()
+    movies = []
+
+    for page in range(1, pages + 1):
+        data = _tmdb_get("movie/upcoming", region=region, page=page)
+        for m in data.get("results", []):
+            mid = m.get("id")
+            release_date = m.get("release_date", "")
+            if not release_date or not mid or mid in seen:
+                continue
+            seen.add(mid)
+            poster_path = m.get("poster_path")
+            movies.append({
+                "id":           str(mid),
+                "title":        m.get("title", "Unknown"),
+                "release_date": release_date,          # full YYYY-MM-DD
+                "year":         release_date[:4],
+                "rating":       f"{m.get('vote_average', 0):.1f}/10",
+                "poster":       f"{TMDB_IMG}{poster_path}" if poster_path else None,
+                "genres":       "N/A",
+                "overview":     m.get("overview", ""),
+                "popularity":   m.get("popularity", 0),
+            })
+
+    # Sort by release date ascending (soonest first)
+    movies.sort(key=lambda x: x["release_date"])
     return movies

@@ -1,6 +1,7 @@
 import random
 import streamlit as st
 import requests
+from datetime import datetime, date
 
 from recommender import (
     fetch_full_movie,
@@ -8,6 +9,12 @@ from recommender import (
     get_recommendations,
     search_movie_tmdb,
     search_movies_for_display,
+    fetch_by_language_country,
+    fetch_upcoming_movies,
+    LANGUAGE_OPTIONS,
+    COUNTRY_OPTIONS,
+    GENRE_ID_MAP,
+    SORT_OPTIONS,
     TMDB_API_KEY,
 )
 
@@ -167,13 +174,49 @@ st.markdown("""
         font-size: 0.75rem !important;
         letter-spacing: 0.06em !important;
     }
+    /* ── Calendar styles ── */
+    .cal-month-header {
+        font-family: 'Bebas Neue', cursive; font-size: 1.6rem; color: #e50914;
+        letter-spacing: 0.12em; border-bottom: 1px solid #2a2a2a;
+        padding-bottom: 6px; margin: 2rem 0 1rem;
+    }
+    .cal-card {
+        display: flex; gap: 14px; align-items: flex-start;
+        background: #161616; border: 1px solid #1f1f1f; border-radius: 10px;
+        padding: 50px; margin-bottom: 10px;
+        transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    .cal-card:hover { border-color: #e50914; box-shadow: 0 6px 24px rgba(229,9,20,0.15); }
+    .cal-date-box {
+        min-width: 52px; background: #e50914; border-radius: 8px;
+        text-align: center; padding: 6px 4px; flex-shrink: 0;
+    }
+    .cal-date-day { font-family: 'Bebas Neue', cursive; font-size: 1.6rem; color: #fff; line-height: 1; }
+    .cal-date-mon { font-size: 0.62rem; font-weight: 700; color: rgba(255,255,255,0.75); letter-spacing: 0.1em; text-transform: uppercase; }
+    .cal-info { flex: 1; min-width: 0; }
+    .cal-title { font-weight: 700; font-size: 0.92rem; color: #eee; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .cal-meta { font-size: 0.72rem; color: #555; margin-top: 3px; }
+    .cal-overview { font-size: 0.75rem; color: #666; margin-top: 5px; line-height: 1.5; }
+    /* ── Language browse filter pills ── */
+    .filter-pill {
+        display: inline-block; background: #1a1a1a; border: 1px solid #333;
+        border-radius: 20px; padding: 4px 14px; font-size: 0.75rem; color: #aaa;
+        margin: 3px; cursor: pointer;
+    }
+    .filter-pill.active { background: #e50914; border-color: #e50914; color: #fff; }
 </style>
 """, unsafe_allow_html=True)
 
 
 # ===================== SESSION STATE =====================
-for _k, _v in [("current_movie_title", None), ("current_movie_id", None), ("watchlist", []), ("active_tab", 0), ("scroll_top", False), ("recently_viewed", []), ("ui_lang", "English")]:
-
+for _k, _v in [
+    ("current_movie_title", None), ("current_movie_id", None),
+    ("watchlist", []), ("active_tab", 0), ("scroll_top", False),
+    ("recently_viewed", []), ("ui_lang", "English"),
+    ("lb_language", "Any"), ("lb_country", "Any"),
+    ("lb_genre", "Any"), ("lb_sort", "Popularity ↓"), ("lb_page", 1),
+    ("cal_region", "🇺🇸 USA"),
+]:
     if _k not in st.session_state:
         st.session_state[_k] = _v
 
@@ -231,7 +274,6 @@ def T(key):
 def set_current_movie(title, tmdb_id=None):
     st.session_state.current_movie_title = title
     st.session_state.current_movie_id = tmdb_id
-    # Track recently viewed
     rv = st.session_state.recently_viewed
     entry = {"title": title, "id": str(tmdb_id) if tmdb_id else ""}
     rv = [r for r in rv if r["id"] != entry["id"]]
@@ -308,7 +350,6 @@ st.markdown(f'<div class="cinematic-sub">{T("sub")}</div>', unsafe_allow_html=Tr
 
 # ===================== SIDEBAR =====================
 with st.sidebar:
-    # Language switcher at top
     ui_lang = st.selectbox(T("ui_language"), list(LANG.keys()),
                            index=list(LANG.keys()).index(st.session_state.get("ui_lang","English")),
                            key="lang_select")
@@ -332,7 +373,6 @@ with st.sidebar:
         chosen_label = st.selectbox(T("select_movie"), options=movie_options, key="movie_selector")
         chosen_idx = movie_options.index(chosen_label)
         chosen_movie = sidebar_results[chosen_idx]
-        # Auto-load when user selects a movie from dropdown
         if st.session_state.get("current_movie_id") != chosen_movie["id"]:
             set_current_movie(chosen_movie["title"], chosen_movie["id"])
             st.session_state.active_tab = 0
@@ -371,11 +411,19 @@ with st.sidebar:
 
 
 # ===================== TABS =====================
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["🎯 " + T("get_recos")[2:], "🔥 " + T("trending")[2:], "🔍 " + T("discover")[2:], "📋 " + T("watchlist_count"), T("recently_viewed")])
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+    "🎯 " + T("get_recos")[2:],
+    "🔥 " + T("trending")[2:],
+    "🔍 " + T("discover")[2:],
+    "🌍 Browse by Language",
+    "📅 Release Calendar",
+     "📋 " + T("watchlist_count"),
+         T("recently_viewed"),
+
+])
 
 # ── TAB 1 ─────────────────────────────────────────────────────────────────────
 with tab1:
-    # Scroll to top when Similar is clicked
     if st.session_state.get("scroll_top", False):
         st.markdown("""
         <script>
@@ -384,7 +432,6 @@ with tab1:
         """, unsafe_allow_html=True)
         st.session_state.scroll_top = False
 
-    # Handle force reload from recently viewed
     if st.session_state.get("_force_reload"):
         st.session_state["_force_reload"] = None
 
@@ -490,8 +537,215 @@ with tab3:
         else:
             st.warning(f'No results found for "{query}".')
 
-# ── TAB 4 ─────────────────────────────────────────────────────────────────────
+# ── TAB 4 — 🌍 BROWSE BY LANGUAGE / COUNTRY ───────────────────────────────────
 with tab4:
+    st.markdown('<div class="section-header">🌍 Browse by Language & Country</div>', unsafe_allow_html=True)
+    st.caption("Discover top movies from any language or region — powered by TMDb Discover API.")
+
+    # ── Filters row ──
+    f1, f2, f3, f4 = st.columns([2, 2, 2, 2])
+    with f1:
+        lb_lang = st.selectbox(
+            "🗣️ Language",
+            options=list(LANGUAGE_OPTIONS.keys()),
+            index=list(LANGUAGE_OPTIONS.keys()).index(st.session_state.lb_language),
+            key="lb_lang_select",
+        )
+        st.session_state.lb_language = lb_lang
+
+    with f2:
+        lb_country = st.selectbox(
+            "🌍 Country / Region",
+            options=list(COUNTRY_OPTIONS.keys()),
+            index=list(COUNTRY_OPTIONS.keys()).index(st.session_state.lb_country),
+            key="lb_country_select",
+        )
+        st.session_state.lb_country = lb_country
+
+    with f3:
+        genre_choices = ["Any"] + list(GENRE_ID_MAP.keys())
+        lb_genre = st.selectbox(
+            "🎭 Genre",
+            options=genre_choices,
+            index=genre_choices.index(st.session_state.lb_genre) if st.session_state.lb_genre in genre_choices else 0,
+            key="lb_genre_select",
+        )
+        st.session_state.lb_genre = lb_genre
+
+    with f4:
+        lb_sort = st.selectbox(
+            "↕️ Sort By",
+            options=list(SORT_OPTIONS.keys()),
+            index=list(SORT_OPTIONS.keys()).index(st.session_state.lb_sort) if st.session_state.lb_sort in SORT_OPTIONS else 0,
+            key="lb_sort_select",
+        )
+        st.session_state.lb_sort = lb_sort
+
+    # Reset page when filters change
+    filter_sig = (lb_lang, lb_country, lb_genre, lb_sort)
+    if st.session_state.get("_lb_last_filter") != filter_sig:
+        st.session_state.lb_page = 1
+        st.session_state["_lb_last_filter"] = filter_sig
+
+    # Active filter summary
+    active_filters = []
+    if lb_lang != "Any":     active_filters.append(f"🗣️ {lb_lang}")
+    if lb_country != "Any":  active_filters.append(f"🌍 {lb_country}")
+    if lb_genre != "Any":    active_filters.append(f"🎭 {lb_genre}")
+    active_filters.append(f"↕️ {lb_sort}")
+    st.markdown(
+        " &nbsp;".join(
+            f'<span style="background:#1a1a1a;border:1px solid #333;border-radius:20px;'
+            f'padding:3px 12px;font-size:0.72rem;color:#aaa;">{f}</span>'
+            for f in active_filters
+        ),
+        unsafe_allow_html=True,
+    )
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    with st.spinner("Fetching movies…"):
+        lb_movies = fetch_by_language_country(
+            language=LANGUAGE_OPTIONS.get(lb_lang, ""),
+            region=COUNTRY_OPTIONS.get(lb_country, ""),
+            genre=lb_genre if lb_genre != "Any" else "",
+            sort=SORT_OPTIONS.get(lb_sort, "popularity.desc"),
+            page=st.session_state.lb_page,
+            n=16,
+        )
+
+    if lb_movies:
+        st.caption(f"Showing page {st.session_state.lb_page} — {len(lb_movies)} movies")
+        render_card_grid(lb_movies, key_prefix="lb", cols_per_row=4)
+
+        # Pagination
+        st.markdown("<br>", unsafe_allow_html=True)
+        pg1, pg2, pg3 = st.columns([1, 2, 1])
+        with pg1:
+            if st.session_state.lb_page > 1:
+                if st.button("← Previous Page", use_container_width=True, key="lb_prev"):
+                    st.session_state.lb_page -= 1
+                    st.rerun()
+        with pg2:
+            st.markdown(
+                f"<div style='text-align:center;color:#444;font-size:0.78rem;padding-top:10px;'>Page {st.session_state.lb_page}</div>",
+                unsafe_allow_html=True,
+            )
+        with pg3:
+            if st.button("Next Page →", use_container_width=True, key="lb_next"):
+                st.session_state.lb_page += 1
+                st.rerun()
+    else:
+        st.warning("No movies found for this combination. Try adjusting the filters.")
+
+# ── TAB 5 — 📅 RELEASE CALENDAR ───────────────────────────────────────────────
+with tab5:
+    st.markdown('<div class="section-header">📅 Upcoming Release Calendar</div>', unsafe_allow_html=True)
+    st.caption("Theatrical releases coming soon — grouped by month.")
+
+    # Region picker
+    cal_col1, cal_col2 = st.columns([2, 6])
+    with cal_col1:
+        cal_region_label = st.selectbox(
+            "🌍 Region",
+            options=list(COUNTRY_OPTIONS.keys())[1:],   # skip "Any"
+            index=list(COUNTRY_OPTIONS.keys())[1:].index(st.session_state.cal_region)
+                  if st.session_state.cal_region in list(COUNTRY_OPTIONS.keys())[1:] else 0,
+            key="cal_region_select",
+        )
+        st.session_state.cal_region = cal_region_label
+
+    cal_region_code = COUNTRY_OPTIONS.get(cal_region_label, "US")
+
+    with st.spinner("Loading upcoming releases…"):
+        upcoming = fetch_upcoming_movies(region=cal_region_code, pages=3)
+
+    if not upcoming:
+        st.warning("No upcoming movies found. Try a different region.")
+    else:
+        today_str = date.today().isoformat()
+
+        # Separate: coming soon vs already released (in case TMDb returns some)
+        future_movies  = [m for m in upcoming if m["release_date"] >= today_str]
+        recent_movies  = [m for m in upcoming if m["release_date"] < today_str]
+
+        def _render_calendar(movies_list, key_prefix):
+            """Render movies grouped by Month Year with card layout."""
+            from itertools import groupby
+
+            def month_key(m):
+                try:
+                    return datetime.strptime(m["release_date"], "%Y-%m-%d").strftime("%B %Y")
+                except Exception:
+                    return "Unknown"
+
+            groups = {}
+            for m in movies_list:
+                mk = month_key(m)
+                groups.setdefault(mk, []).append(m)
+
+            for month_label, group in groups.items():
+                st.markdown(f'<div class="cal-month-header">📆 {month_label}</div>', unsafe_allow_html=True)
+                cols_per_row = 2
+                for i in range(0, len(group), cols_per_row):
+                    row_movies = group[i:i + cols_per_row]
+                    row_cols   = st.columns(len(row_movies))
+                    for j, m in enumerate(row_movies):
+                        with row_cols[j]:
+                            try:
+                                dt = datetime.strptime(m["release_date"], "%Y-%m-%d")
+                                day_str = dt.strftime("%d")
+                                mon_str = dt.strftime("%b")
+                            except Exception:
+                                day_str, mon_str = "?", "?"
+
+                            overview_snippet = m.get("overview", "")
+                            overview_snippet = overview_snippet[:120] + "…" if len(overview_snippet) > 120 else overview_snippet
+
+                            # Card HTML
+                            poster_html = (
+                                f'<img src="{m["poster"]}" style="width:54px;height:80px;object-fit:cover;border-radius:6px;flex-shrink:0;" loading="lazy"/>'
+                                if m.get("poster")
+                                else '<div style="width:54px;height:80px;background:#1a1a2e;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:1.4rem;flex-shrink:0;">🎬</div>'
+                            )
+                            st.markdown(f"""
+                            <div class="cal-card">
+                                <div class="cal-date-box">
+                                    <div class="cal-date-day">{day_str}</div>
+                                    <div class="cal-date-mon">{mon_str}</div>
+                                </div>
+                                {poster_html}
+                                <div class="cal-info">
+                                    <div class="cal-title">{m['title']}</div>
+                                    <div class="cal-meta">⭐ {m.get('rating','N/A')} &nbsp;•&nbsp; {m.get('release_date','')}</div>
+                                    <div class="cal-overview">{overview_snippet}</div>
+                                </div>
+                            </div>
+                            """, unsafe_allow_html=True)
+
+                            # Action buttons
+                            b1, b2 = st.columns([1, 1])
+                            with b1:
+                                if st.button(T("similar"), key=f"{key_prefix}_sim_{m['id']}", use_container_width=True):
+                                    set_current_movie(m["title"], int(m["id"]) if m["id"].isdigit() else None)
+                                    st.session_state.active_tab = 0
+                                    st.session_state.scroll_top = True
+                                    st.rerun()
+                            with b2:
+                                in_wl = m.get("id") in [w["id"] for w in st.session_state.watchlist]
+                                if st.button(T("saved") if in_wl else T("save"), key=f"{key_prefix}_wl_{m['id']}", disabled=in_wl, use_container_width=True):
+                                    add_to_watchlist(m)
+                                    st.rerun()
+
+        if future_movies:
+            st.markdown(f"<span style='color:#555;font-size:0.8rem;'>Showing {len(future_movies)} upcoming releases for <b style='color:#aaa'>{cal_region_label}</b></span>", unsafe_allow_html=True)
+            _render_calendar(future_movies, key_prefix="cal_fut")
+
+        if recent_movies:
+            with st.expander(f"🎬 Recently Released ({len(recent_movies)} movies)", expanded=False):
+                _render_calendar(recent_movies, key_prefix="cal_rec")
+    
+
+with tab6:
     wl = st.session_state.watchlist
     count = len(wl)
     st.markdown(f'<div class="section-header">📋 My Watchlist — {count} movie{"s" if count != 1 else ""}</div>', unsafe_allow_html=True)
@@ -535,11 +789,9 @@ with tab4:
                             trailer_key = "none"
                         st.session_state[f"trailer_{w['id']}"] = trailer_key
                     current = st.session_state.get(f"show_trailer_{w['id']}", False)
-                    # Close all other trailers first
                     for _w in st.session_state.watchlist:
                         if _w["id"] != w["id"]:
                             st.session_state[f"show_trailer_{_w['id']}"] = False
-                    # Toggle this one
                     st.session_state[f"show_trailer_{w['id']}"] = not current
                     st.rerun()
             with c4:
@@ -551,7 +803,7 @@ with tab4:
             show_trailer = st.session_state.get(f"show_trailer_{w['id']}", False)
             if show_trailer and trailer_key and trailer_key != "none":
                 st.markdown(
-                    f'<iframe width="100%" height="315" src="https://www.youtube.com/embed/{trailer_key}?autoplay=1" '
+                    f'<iframe width="100%" height="515" src="https://www.youtube.com/embed/{trailer_key}?autoplay=1" '
                     f'frameborder="0" allow="autoplay; encrypted-media" allowfullscreen style="border-radius:10px;margin:8px 0;"></iframe>',
                     unsafe_allow_html=True
                 )
@@ -565,9 +817,8 @@ with tab4:
             if st.button(T("clear_wl"), use_container_width=True):
                 st.session_state.watchlist = []
                 st.rerun()
-
-# ── TAB 5 ─────────────────────────────────────────────────────────────────────
-with tab5:
+    
+with tab7:
     st.markdown(f'<div class="section-header">{T("recently_viewed")}</div>', unsafe_allow_html=True)
     rv = st.session_state.recently_viewed
     if not rv:
@@ -589,7 +840,6 @@ with tab5:
                     set_current_movie(r["title"], _mid)
                     st.session_state.active_tab = 0
                     st.session_state.scroll_top = True
-                    # Force clear current movie to trigger reload
                     st.session_state["_force_reload"] = r["id"]
                     st.rerun()
             with rc3:
@@ -603,6 +853,7 @@ with tab5:
             if st.button(T("clear_hist"), use_container_width=True):
                 st.session_state.recently_viewed = []
                 st.rerun()
+
 
 # ===================== FOOTER =====================
 st.markdown("---")
