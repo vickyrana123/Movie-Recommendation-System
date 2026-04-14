@@ -331,8 +331,11 @@ with st.sidebar:
     if movie_options:
         chosen_label = st.selectbox(T("select_movie"), options=movie_options, key="movie_selector")
         chosen_idx = movie_options.index(chosen_label)
-        if st.button(T("get_recos"), use_container_width=True):
-            set_current_movie(sidebar_results[chosen_idx]["title"], sidebar_results[chosen_idx]["id"])
+        chosen_movie = sidebar_results[chosen_idx]
+        # Auto-load when user selects a movie from dropdown
+        if st.session_state.get("current_movie_id") != chosen_movie["id"]:
+            set_current_movie(chosen_movie["title"], chosen_movie["id"])
+            st.session_state.active_tab = 0
             st.rerun()
     elif search_term:
         st.caption(T("no_results"))
@@ -381,6 +384,10 @@ with tab1:
         """, unsafe_allow_html=True)
         st.session_state.scroll_top = False
 
+    # Handle force reload from recently viewed
+    if st.session_state.get("_force_reload"):
+        st.session_state["_force_reload"] = None
+
     if st.session_state.current_movie_title:
         title = st.session_state.current_movie_title
         mid   = st.session_state.current_movie_id
@@ -401,9 +408,14 @@ with tab1:
             <div class="featured-banner">
                 <div class="featured-badge">{T("now_exploring")}</div>
                 <div class="featured-title">{feat_title}</div>
-                <div class="featured-meta">
-                    ⭐ {feat_rating} &nbsp;•&nbsp; {feat_year} &nbsp;•&nbsp; {feat_runtime}<br>
-                    🎬 {feat_dir} &nbsp;•&nbsp; {feat_genres}
+                <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:12px;">
+                    <span style="background:#1a1a1a;border:1px solid #333;border-radius:20px;padding:4px 14px;font-size:0.78rem;color:#f0c040;font-weight:700;">⭐ {feat_rating}</span>
+                    <span style="background:#1a1a1a;border:1px solid #333;border-radius:20px;padding:4px 14px;font-size:0.78rem;color:#aaa;">📅 {feat_year}</span>
+                    <span style="background:#1a1a1a;border:1px solid #333;border-radius:20px;padding:4px 14px;font-size:0.78rem;color:#aaa;">⏱ {feat_runtime}</span>
+                    <span style="background:#1a1a1a;border:1px solid #333;border-radius:20px;padding:4px 14px;font-size:0.78rem;color:#aaa;">🎬 {feat_dir}</span>
+                </div>
+                <div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:6px;">
+                    {"".join(f'<span style="background:#e50914;color:#fff;border-radius:12px;padding:2px 10px;font-size:0.7rem;font-weight:600;">{g}</span>' for g in feat_genres.split(", ") if g and g != "N/A")}
                 </div>
                 <div style="margin-top:10px;font-size:0.82rem;color:#777;max-width:640px;line-height:1.6;">
                     {feat_story[:240] + "…" if len(feat_story) > 240 else feat_story}
@@ -573,9 +585,12 @@ with tab5:
                 st.markdown(f"🎬 **{r['title']}**", unsafe_allow_html=True)
             with rc2:
                 if st.button(T("similar"), key=f"rv_sim_{ridx}"):
-                    set_current_movie(r["title"], int(r["id"]) if r.get("id") else None)
+                    _mid = int(r["id"]) if r.get("id") and str(r["id"]).isdigit() else None
+                    set_current_movie(r["title"], _mid)
                     st.session_state.active_tab = 0
                     st.session_state.scroll_top = True
+                    # Force clear current movie to trigger reload
+                    st.session_state["_force_reload"] = r["id"]
                     st.rerun()
             with rc3:
                 if st.button(T("remove"), key=f"rv_rm_{ridx}"):
