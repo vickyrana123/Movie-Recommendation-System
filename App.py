@@ -607,8 +607,8 @@ with tab5:
 # ===================== FOOTER =====================
 st.markdown("---")
 st.markdown(
-    "<p style='text-align:center;color:#2a2a2a;font-size:0.72rem;letter-spacing:0.12em;text-transform:uppercase;'>"
-    "CineMatch &nbsp;•&nbsp; Your Movie Universe &nbsp;•&nbsp; Powered by TMDb"
+    "<p style='text-align:center;color:#2a2a2a;font-size:1.12rem;letter-spacing:0.12em;text-transform:uppercase;'>"
+    "MADE BY ❤ VICKY RANA"
     "</p>",
     unsafe_allow_html=True
 )
