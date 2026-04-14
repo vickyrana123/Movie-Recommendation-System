@@ -137,7 +137,7 @@ st.markdown("""
         box-shadow: 0 4px 18px rgba(229,9,20,0.4) !important;
     }
     .stButton > button:disabled { background: #2a2a2a !important; color: #555 !important; transform: none !important; box-shadow: none !important; }
-    section[data-testid="stSidebar"] .stButton > button { background: transparent !important; border: 1px solid #e50914 !important; color: #e50914 !important; width: 100% !important; }
+    section[data-testid="stSidebar"] .stButton > button { background: transparent !important; border: 1px solid #e50914 !important; color: #e50914 !important; width: 100% !important; padding: 0.6rem 1rem !important; height: auto !important; }
     section[data-testid="stSidebar"] .stButton > button:hover { background: #e50914 !important; color: #fff !important; }
     [data-testid="stExpander"] { background: #1a1a1a !important; border: 1px solid #252525 !important; border-radius: 8px !important; }
     [data-testid="stExpander"] summary { color: #888 !important; font-size: 0.78rem !important; }
@@ -331,7 +331,7 @@ with st.sidebar:
     if movie_options:
         chosen_label = st.selectbox(T("select_movie"), options=movie_options, key="movie_selector")
         chosen_idx = movie_options.index(chosen_label)
-        if st.button(T("get_recos")):
+        if st.button(T("get_recos"), use_container_width=True):
             set_current_movie(sidebar_results[chosen_idx]["title"], sidebar_results[chosen_idx]["id"])
             st.rerun()
     elif search_term:
@@ -352,13 +352,16 @@ with st.sidebar:
     st.markdown("<div style='width:100%'>", unsafe_allow_html=True)
     if st.button(T("surprise"), use_container_width=True):
         import random as _r
-        pop = requests.get("https://api.themoviedb.org/3/movie/popular",
-                           params={"api_key": TMDB_API_KEY, "page": _r.randint(1, 10)},
-                           timeout=6).json().get("results", [])
-        if pop:
-            pick = _r.choice(pop)
-            set_current_movie(pick["title"], pick["id"])
-            st.rerun()
+        try:
+            pop = requests.get("https://api.themoviedb.org/3/movie/popular",
+                               params={"api_key": TMDB_API_KEY, "page": _r.randint(1, 5)},
+                               timeout=10).json().get("results", [])
+            if pop:
+                pick = _r.choice(pop)
+                set_current_movie(pick["title"], pick["id"])
+                st.rerun()
+        except Exception:
+            st.toast("⚠️ Connection timeout. Please try again!", icon="🌐")
     st.markdown("</div>", unsafe_allow_html=True)
     if st.session_state.watchlist:
         st.markdown(f"📋 **{T('watchlist_count')}:** {len(st.session_state.watchlist)}")

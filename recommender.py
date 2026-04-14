@@ -2,18 +2,16 @@
 recommender.py
 ==============
 Lightweight movie recommendation engine — zero PyTorch, zero ChromaDB.
-
-Stack:
-  - TMDb API          → live movie metadata
-  - scikit-learn      → TF-IDF vectorizer + cosine similarity
-  - Pure Python cache → no SQLite, no DLL issues
+Optimized for speed: parallel fetching, session caching, reduced API calls.
 """
 
 import os
+import time
 import pickle
 import requests
 import numpy as np
 from functools import lru_cache
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
@@ -21,6 +19,10 @@ TMDB_API_KEY = os.getenv("TMDB_API_KEY", "")
 TMDB_BASE    = "https://api.themoviedb.org/3"
 TMDB_IMG     = "https://image.tmdb.org/t/p/w500"
 CACHE_FILE   = "./movie_cache.pkl"
+
+# Persistent HTTP session — reuses connection, much faster than new requests each time
+_session = requests.Session()
+_session.headers.update({"Accept": "application/json"})
 
 _movie_store: dict = {}
 _vectorizer        = None
@@ -51,25 +53,36 @@ def _rebuild_matrix():
         return
     _matrix_ids = list(_movie_store.keys())
     docs = [_movie_store[mid]["document"] for mid in _matrix_ids]
-    _vectorizer = TfidfVectorizer(ngram_range=(1,2), max_features=15000, sublinear_tf=True)
+    _vectorizer = TfidfVectorizer(
+        ngram_range=(1, 2),
+        max_features=10000,   # reduced from 15000 → faster rebuild
+        sublinear_tf=True
+    )
     _matrix = _vectorizer.fit_transform(docs)
 
 _load_cache()
 _rebuild_matrix()
 
 
+# ── TMDb helpers ──────────────────────────────────────────────────────────────
 def _tmdb_get(path: str, **params) -> dict:
     try:
-        r = requests.get(f"{TMDB_BASE}/{path}", params={"api_key": TMDB_API_KEY, **params}, timeout=8)
+        r = _session.get(
+            f"{TMDB_BASE}/{path}",
+            params={"api_key": TMDB_API_KEY, **params},
+            timeout=10        # reduced from 8 → fail faster on bad requests
+        )
         r.raise_for_status()
         return r.json()
     except Exception:
         return {}
 
+
 @lru_cache(maxsize=2048)
 def search_movie_tmdb(query: str) -> list:
     data = _tmdb_get("search/movie", query=query)
     return data.get("results", [])
+
 
 @lru_cache(maxsize=2048)
 def fetch_full_movie(movie_id: int) -> dict:
@@ -100,6 +113,7 @@ def fetch_full_movie(movie_id: int) -> dict:
         "poster":      poster,
     }
 
+
 def _build_document(movie: dict) -> str:
     genres_boost   = (movie.get("genres",   "") + " ") * 3
     keywords_boost = (movie.get("keywords", "") + " ") * 2
@@ -108,6 +122,7 @@ def _build_document(movie: dict) -> str:
              movie.get("cast", ""), movie.get("overview", ""), movie.get("title", "")]
     return " ".join(p for p in parts if p.strip())
 
+
 def _add_movie_to_store(movie: dict) -> bool:
     mid = movie["id"]
     if mid in _movie_store:
@@ -115,69 +130,127 @@ def _add_movie_to_store(movie: dict) -> bool:
     _movie_store[mid] = {"movie": movie, "document": _build_document(movie)}
     return True
 
+
+def _fetch_movie_parallel(movie_id: int) -> dict:
+    """Wrapper for parallel fetching — skips already cached."""
+    if str(movie_id) in _movie_store:
+        return _movie_store[str(movie_id)]["movie"]
+    return fetch_full_movie(movie_id)
+
+
 def _bootstrap_collection(n: int = 60) -> None:
-    ids_seen = set(); added = False
+    """Fetch bootstrap movies in parallel for speed."""
+    ids_seen = set()
+    all_ids  = []
+
     for endpoint in ["movie/popular", "movie/top_rated", "movie/now_playing"]:
         for m in _tmdb_get(endpoint, page=1).get("results", []):
             if len(ids_seen) >= n: break
             mid = m.get("id")
             if mid and mid not in ids_seen:
                 ids_seen.add(mid)
-                movie = fetch_full_movie(mid)
-                if movie and _add_movie_to_store(movie):
-                    added = True
+                all_ids.append(mid)
         if len(ids_seen) >= n: break
+
+    # Fetch all in parallel — up to 8 threads
+    added = False
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        futures = {ex.submit(fetch_full_movie, mid): mid for mid in all_ids}
+        for future in as_completed(futures):
+            movie = future.result()
+            if movie and _add_movie_to_store(movie):
+                added = True
+
     if added:
-        _rebuild_matrix(); _save_cache()
+        _rebuild_matrix()
+        _save_cache()
+
 
 def get_recommendations(movie_title: str, n: int = 10) -> list:
     global _vectorizer, _matrix, _matrix_ids
+
     results = search_movie_tmdb(movie_title)
     if not results: return []
+
     seed = fetch_full_movie(results[0]["id"])
     if not seed: return []
+
     seed_id = seed["id"]
     _add_movie_to_store(seed)
+
     if len(_movie_store) < n + 5:
         _bootstrap_collection(n + 40)
     else:
         _rebuild_matrix()
+
     if _matrix is None or len(_matrix_ids) < 2: return []
     if seed_id not in _matrix_ids: _rebuild_matrix()
+
     try:
         seed_idx = _matrix_ids.index(seed_id)
     except ValueError:
         return []
-    sim_scores    = cosine_similarity(_matrix[seed_idx], _matrix).flatten()
+
+    sim_scores     = cosine_similarity(_matrix[seed_idx], _matrix).flatten()
     ranked_indices = np.argsort(sim_scores)[::-1]
-    recommendations = []
+
+    # Collect top candidate IDs first (exclude seed)
+    candidate_ids = []
     for idx in ranked_indices:
         mid = _matrix_ids[idx]
         if mid == seed_id: continue
-        full = fetch_full_movie(int(mid))
-        if full: recommendations.append(full)
-        elif _movie_store.get(mid, {}).get("movie"): recommendations.append(_movie_store[mid]["movie"])
+        candidate_ids.append(mid)
+        if len(candidate_ids) >= n + 5: break
+
+    # Fetch all candidates in parallel
+    recommendations = []
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        futures = {ex.submit(_fetch_movie_parallel, int(mid)): mid for mid in candidate_ids}
+        results_map = {}
+        for future in as_completed(futures):
+            mid = futures[future]
+            movie = future.result()
+            if movie:
+                results_map[mid] = movie
+
+    # Preserve similarity order
+    for mid in candidate_ids:
+        if mid in results_map:
+            recommendations.append(results_map[mid])
+        elif _movie_store.get(mid, {}).get("movie"):
+            recommendations.append(_movie_store[mid]["movie"])
         if len(recommendations) >= n: break
+
     return recommendations
+
 
 def fetch_trending(n: int = 16) -> list:
     data = _tmdb_get("trending/movie/week")
     movies = []
     for m in data.get("results", [])[:n]:
         poster_path = m.get("poster_path")
-        movies.append({"id": str(m.get("id","")), "title": m.get("title","Unknown"),
-            "year": (m.get("release_date","") or "")[:4],
-            "rating": f"{m.get('vote_average',0):.1f}/10",
-            "poster": f"{TMDB_IMG}{poster_path}" if poster_path else None, "genres": "N/A"})
+        movies.append({
+            "id":     str(m.get("id", "")),
+            "title":  m.get("title", "Unknown"),
+            "year":   (m.get("release_date", "") or "")[:4],
+            "rating": f"{m.get('vote_average', 0):.1f}/10",
+            "poster": f"{TMDB_IMG}{poster_path}" if poster_path else None,
+            "genres": "N/A",
+        })
     return movies
+
 
 def search_movies_for_display(query: str, n: int = 12) -> list:
     results = search_movie_tmdb(query)
     movies  = []
     for m in results[:n]:
         poster_path = m.get("poster_path")
-        movies.append({"id": str(m.get("id","")), "title": m.get("title","Unknown"),
-            "year": (m.get("release_date","") or "")[:4],
-            "rating": f"{m.get('vote_average',0):.1f}/10",
-            "poster": f"{TMDB_IMG}{poster_path}" if poster_path else None, "genres": "N/A"})
+        movies.append({
+            "id":     str(m.get("id", "")),
+            "title":  m.get("title", "Unknown"),
+            "year":   (m.get("release_date", "") or "")[:4],
+            "rating": f"{m.get('vote_average', 0):.1f}/10",
+            "poster": f"{TMDB_IMG}{poster_path}" if poster_path else None,
+            "genres": "N/A",
+        })
     return movies
